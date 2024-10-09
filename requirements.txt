@@ -1,1 +1,5 @@
-streamlit
+streamlit==1.25.1
+SQLAlchemy==2.0.8
+psycopg2-binary==2.9.7
+python-dotenv==1.0.0
+pandas==1.5.3
