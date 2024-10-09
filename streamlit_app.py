@@ -18,12 +18,22 @@ from datetime import datetime, timedelta
 # Load environment variables from .env file
 load_dotenv()
 
+# Debug Mode
+DEBUG_MODE = os.getenv('DEBUG', 'False').lower() in ['true', '1', 't']
+
 # Configure Logging
-logging.basicConfig(
-    filename='quiz_app.log',
-    level=logging.INFO,
-    format='%(asctime)s:%(levelname)s:%(message)s'
-)
+if DEBUG_MODE:
+    logging.basicConfig(
+        filename='quiz_app.log',
+        level=logging.DEBUG,  # More verbose logging
+        format='%(asctime)s:%(levelname)s:%(message)s'
+    )
+else:
+    logging.basicConfig(
+        filename='quiz_app.log',
+        level=logging.INFO,
+        format='%(asctime)s:%(levelname)s:%(message)s'
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +47,14 @@ DB_PASSWORD = os.getenv('DB_PASSWORD', 'your_secure_password')
 DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 # Create SQLAlchemy engine and session
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+try:
+    engine = create_engine(DATABASE_URL)
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    logger.info("Database engine created successfully.")
+except Exception as e:
+    logger.error(f"Error creating engine: {e}")
+    st.error(f"Failed to create database engine: {e}")
+    st.stop()
 
 # Define Base for declarative models
 Base = declarative_base()
@@ -76,8 +92,13 @@ class Question(Base):
     )
 
 # Create tables if they do not exist
-Base.metadata.create_all(bind=engine)
-logger.info("Database tables checked/created.")
+try:
+    Base.metadata.create_all(bind=engine)
+    logger.info("Database tables checked/created.")
+except Exception as e:
+    logger.error(f"Error creating tables: {e}")
+    st.error(f"Failed to create database tables: {e}")
+    st.stop()
 
 # ---------------------------
 # Utility Functions
@@ -92,10 +113,14 @@ def get_db_session() -> Session:
     """
     try:
         session = SessionLocal()
+        logger.debug("Database session created.")
         return session
     except Exception as e:
         logger.error(f"Error creating database session: {e}")
-        st.error("Database connection failed.")
+        if DEBUG_MODE:
+            st.error(f"Database connection failed: {e}")
+        else:
+            st.error("Database connection failed. Please contact the administrator.")
         st.stop()
 
 def fetch_all_questions(session: Session) -> list:
@@ -114,7 +139,10 @@ def fetch_all_questions(session: Session) -> list:
         return questions
     except Exception as e:
         logger.error(f"Error fetching questions: {e}")
-        st.error("Failed to retrieve questions.")
+        if DEBUG_MODE:
+            st.error(f"Failed to retrieve questions: {e}")
+        else:
+            st.error("Failed to retrieve questions.")
         return []
 
 def add_question(session: Session, question_data: dict) -> bool:
@@ -137,6 +165,10 @@ def add_question(session: Session, question_data: dict) -> bool:
     except Exception as e:
         session.rollback()
         logger.error(f"Error adding question: {e}")
+        if DEBUG_MODE:
+            st.error(f"Failed to add question: {e}")
+        else:
+            st.error("Failed to add question. Please check the logs for details.")
         return False
 
 def parse_json_questions(json_data: str) -> list:
@@ -156,10 +188,17 @@ def parse_json_questions(json_data: str) -> list:
             return questions
         else:
             logger.error("JSON data is not a list.")
+            if DEBUG_MODE:
+                st.error("JSON data must be a list of questions.")
+            else:
+                st.error("Invalid JSON format.")
             return []
     except json.JSONDecodeError as e:
         logger.error(f"JSON decode error: {e}")
-        st.error("Invalid JSON format.")
+        if DEBUG_MODE:
+            st.error(f"Invalid JSON format: {e}")
+        else:
+            st.error("Invalid JSON format.")
         return []
 
 # ---------------------------
@@ -172,6 +211,16 @@ def main():
     """
     st.set_page_config(page_title="Quiz Application", layout="wide")
     st.title("📚 Interactive Quiz Application")
+
+    # Display Database Configuration in Debug Mode
+    if DEBUG_MODE:
+        st.sidebar.header("Debug Information")
+        st.sidebar.write("**Database Configuration:**")
+        st.sidebar.write(f"HOST: {DB_HOST}")
+        st.sidebar.write(f"PORT: {DB_PORT}")
+        st.sidebar.write(f"DB_NAME: {DB_NAME}")
+        st.sidebar.write(f"DB_USER: {DB_USER}")
+        # Do NOT display DB_PASSWORD
 
     # Sidebar Navigation
     menu = ["Take Quiz", "Admin: Add Questions"]
@@ -227,11 +276,11 @@ def take_quiz():
             'C': question.option_c,
             'D': question.option_d
         }
-        selected = st.radio("Select an option:", list(options.keys()), index= -1 if st.session_state.answers.get(question.id) is None else list(options.keys()).index(st.session_state.answers.get(question.id)))
+        default_index = list(options.keys()).index(st.session_state.answers.get(question.id, 'A')) if question.id in st.session_state.answers else -1
+        selected = st.radio("Select an option:", list(options.keys()), index=default_index if default_index >=0 else 0)
 
         # Save answer
-        if selected:
-            st.session_state.answers[question.id] = selected
+        st.session_state.answers[question.id] = selected
 
         # Navigation Buttons
         col1, col2, col3 = st.columns(3)
@@ -247,6 +296,7 @@ def take_quiz():
                 st.session_state.current_question += 1
             elif st.button("Submit") and st.session_state.current_question == len(questions) - 1:
                 submit_quiz(session, questions)
+
     else:
         st.success("You have completed the quiz!")
         submit_quiz(session, questions)
@@ -369,10 +419,17 @@ def admin_add_questions():
                                 success_count += 1
                         else:
                             logger.warning(f"Question missing fields: {q}")
+                            if DEBUG_MODE:
+                                st.warning(f"Question missing fields: {q}")
+                            else:
+                                st.warning("A question was missing required fields and was skipped.")
                     st.success(f"Successfully added {success_count} questions.")
             except Exception as e:
                 logger.error(f"Error processing uploaded file: {e}")
-                st.error("Failed to process the uploaded file.")
+                if DEBUG_MODE:
+                    st.error(f"Failed to process the uploaded file: {e}")
+                else:
+                    st.error("Failed to process the uploaded file.")
 
 if __name__ == "__main__":
     main()
